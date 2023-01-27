@@ -28,11 +28,19 @@ int main(){
       mkfifo("Lobby", 0644);
       int door = open("Lobby", O_RDWR);
       int fval;
+      char room[2];
+      room[1]=0;
 
-      fval = fork();
+      for (int i = 0; i < 10; i++){
+          if(fval){
+              fval = fork();
+              room[0] = 'a' + i;
+          }
+      }
+
       if(!fval){
-          mkfifo("Room", 0644);
-          int readwkp = open("Room", O_RDONLY);
+          mkfifo(room, 0644);
+          int readwkp = open(room, O_RDWR);
           int subsrvrfds[MAXCLIENTS];
           int inroom[MAXCLIENTS];
           for(int i = 0; i < MAXCLIENTS; i++){
@@ -51,15 +59,19 @@ int main(){
                   sprintf(buff.message, "%d", currid);
                   subsrvrfds[currid] = open(buff.message, O_WRONLY);
                   currid++;
-                  printf("Room has accounted for new client\n");
+                  printf("Room %s has accounted for new client\n", room);
               }
               else if(!inroom[buff.id]){//if they aren't in the room, add them
                   inroom[buff.id] = 1;
-                  printf("Added client with id %d to room\n", buff.id);
+                  printf("Added client with id %d to room %s\n", buff.id, room);
               }
               else{//if they are in the room, they are talking, send it to everyone else in the room
+                  if(strcmp(buff.message, "/exit") == 0){
+                      inroom[buff.id] = 0;
+                      printf("Successfully Removed!!!\n");
+                  }
                   for(int i = 0; i < MAXCLIENTS; i++){
-                      if(inroom[i] && (i != buff.id)){
+                      if(inroom[i] /*&& (i != buff.id)*/){
                           write(subsrvrfds[i], &buff, sizeof(struct message_data));
                       }
                   }
@@ -68,7 +80,11 @@ int main(){
       }
 
       else{
-          int roomwkp = open("Room", O_WRONLY);
+          int roomwkp[10];
+          for (int i = 0; i < 10; i++){
+              room[0]='a'+i;
+              roomwkp[i] = open(room, O_WRONLY);
+          }
           strcpy(buff.name, "Lobby");
           buff.id = -1;
           while(1){
@@ -101,22 +117,34 @@ int main(){
                   while(1){
                       int i = select(readwkp+1, &read_fds, NULL, NULL, NULL);
                       if (FD_ISSET(client_socket, &read_fds)){
-                          read(client_socket, client_data.message, 1024);
-                          printf("Message received from client: %s\n", client_data.message);
-                          write(roomwkp, &client_data, sizeof(struct message_data));
+                          if (location == 0){
+                              read(client_socket, client_data.message, 1024);
+                              location = client_data.message[0] - 'a' + 1;
+                              write(roomwkp[location-1], &client_data, sizeof(struct message_data));
+                          }
+                          else{
+                              read(client_socket, client_data.message, 1024);
+                              printf("Message received from client: %s\n", client_data.message);
+                              write(roomwkp[location-1], &client_data, sizeof(struct message_data));
+                              if (strcmp(client_data.message, "/exit") == 0){
+                                  location = 0;
+                              }
+                          }
                           FD_SET(readwkp, &read_fds);
                       }
                       else{
                           read(readwkp, &buff, sizeof(struct message_data));
-                          printf("Message received from room %s\n", buff.message);
-                          write(client_socket, buff.message, 1024);
+                          printf("Message received from room %d: %s\n", location, buff.message);
+                          write(client_socket, &buff, sizeof(struct message_data));
                           FD_SET(client_socket, &read_fds);
                       }
                   }
 
               }
               else{
-                  write(roomwkp, &buff, sizeof(struct message_data));
+                  for(int i = 0; i < 10; i++){
+                      write(roomwkp[i], &buff, sizeof(struct message_data));
+                  }
               }
 
           currid++;
