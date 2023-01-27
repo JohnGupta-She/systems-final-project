@@ -24,71 +24,109 @@ int main(){
       fd_set listen_fd;
 
       int currid = 0;
-      char buff[1024];
+      struct message_data buff;
       mkfifo("Lobby", 0644);
       int door = open("Lobby", O_RDWR);
-      int fval = 1;
-      while(1){
-          //wait for next client
-          FD_ZERO(&listen_fd);
-          FD_SET(listen_socket, &listen_fd);
-          int i = select(listen_socket+1, &listen_fd, NULL, NULL, &time);
-          if(FD_ISSET(listen_socket, &listen_fd)){
-          printf("Waiting for connection\n");
-          int client_socket = accept(listen_socket,(struct sockaddr *)&client_address, &sock_size);
+      int fval;
 
-          fval = fork();
-          //WHILE SUBSRVR
-          if (!fval){
-          struct message_data client_data;
-          client_data.id = currid;//setting ID
-          printf("Waiting to read\n");
-          read(client_socket, &(client_data.name), 32);//setting Name
-          printf("Read, name: %s\n", client_data.name);
-
-          sprintf(buff, "%d", currid);
-          printf("%s\n", buff);
-          mkfifo(buff, 0644);
-          printf("Fifo existen\n");
-          int readwkp = open(buff, O_RDONLY);//setting up pipes
-
+      fval = fork();
+      if(!fval){
+          mkfifo("Room", 0644);
+          int readwkp = open("Room", O_RDONLY);
+          int subsrvrfds[MAXCLIENTS];
+          int inroom[MAXCLIENTS];
+          for(int i = 0; i < MAXCLIENTS; i++){
+              inroom[i] = 0;
+          }
+          int currid = 0;
           fd_set read_fds;
           FD_ZERO(&read_fds);
-          FD_SET(client_socket, &read_fds);
           FD_SET(readwkp, &read_fds);
 
-
+          printf("Jazz has been set up\n");
           while(1){
-              int i = select(readwkp+1, &read_fds, NULL, NULL, NULL);
-              if (FD_ISSET(client_socket, &read_fds)){
-                  read(client_socket, buff, 1024);
-                  printf("%s\n", buff);
-                  write(door, buff, 1024);
+              
+              read(readwkp, &buff, sizeof(struct message_data));
+              if(buff.id == -1){//if it's the lobby, someone new is here!
+                  sprintf(buff.message, "%d", currid);
+                  subsrvrfds[currid] = open(buff.message, O_WRONLY);
+                  currid++;
+                  printf("Room has accounted for new client\n");
+              }
+              else if(!inroom[buff.id]){//if they aren't in the room, add them
+                  inroom[buff.id] = 1;
+                  printf("Added client with id %d to room\n", buff.id);
+              }
+              else{//if they are in the room, they are talking, send it to everyone else in the room
+                  for(int i = 0; i < MAXCLIENTS; i++){
+                      if(inroom[i] && (i != buff.id)){
+                          write(subsrvrfds[i], &buff, sizeof(struct message_data));
+                      }
+                  }
+              }
+          }
+      }
+
+      else{
+          int roomwkp = open("Room", O_WRONLY);
+          strcpy(buff.name, "Lobby");
+          buff.id = -1;
+          while(1){
+              //wait for next client
+              printf("Waiting for connection\n");
+              int client_socket = accept(listen_socket,(struct sockaddr *)&client_address, &sock_size);
+
+              fval = fork();
+              //WHILE SUBSRVR
+              if (!fval){
+                  struct message_data client_data;
+                  int location = 0;//0 for lobby, 1 for room
+                  client_data.id = currid;//setting ID
+                  printf("Waiting to read\n");
+                  read(client_socket, &(client_data.name), 32);//setting Name
+                  printf("Read, name: %s\n", client_data.name);
+
+                  sprintf(buff.message, "%d", currid);
+                  printf("%s\n", buff.message);
+                  mkfifo(buff.message, 0644);
+                  printf("Fifo existen\n");
+                  int readwkp = open(buff.message, O_RDONLY);//setting up pipes
+
+                  fd_set read_fds;
+                  FD_ZERO(&read_fds);
+                  FD_SET(client_socket, &read_fds);
                   FD_SET(readwkp, &read_fds);
+
+
+                  while(1){
+                      int i = select(readwkp+1, &read_fds, NULL, NULL, NULL);
+                      if (FD_ISSET(client_socket, &read_fds)){
+                          read(client_socket, client_data.message, 1024);
+                          printf("Message received from client: %s\n", client_data.message);
+                          write(roomwkp, &client_data, sizeof(struct message_data));
+                          FD_SET(readwkp, &read_fds);
+                      }
+                      else{
+                          read(readwkp, &buff, sizeof(struct message_data));
+                          printf("Message received from room %s\n", buff.message);
+                          write(client_socket, buff.message, 1024);
+                          FD_SET(client_socket, &read_fds);
+                      }
+                  }
+
               }
               else{
-                  read(readwkp, buff, 1024);
-                  printf("%s\n", buff);
-                  FD_SET(client_socket, &read_fds);
+                  write(roomwkp, &buff, sizeof(struct message_data));
               }
-          }
-          }
-          currid++;
-      }
-      if(fval){
-              int clientfds[MAXCLIENTS];
-              sprintf(buff, "%d", currid);
-              clientfds[currid] = open(buff, O_WRONLY);
-              //while(1){
-                  read(door, buff, 1024);
-                  printf("The doorman says %s\n", buff);
-                  for (int i = 0; i < currid + 1; i++){
-                      write(clientfds[i], buff, 1024);
-              //    }
-              }
-          }
-      }
 
+          currid++;
+          }
+          if(fval){
+              int clientfds[MAXCLIENTS];
+              sprintf(buff.message, "%d", currid);
+              clientfds[currid] = open(buff.message, O_WRONLY);
+              }
+      }
       free(hints);
       freeaddrinfo(results);
       return 0;
